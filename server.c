@@ -223,7 +223,7 @@ void * start_game(void *arg){
     struct thread_args *clients = arg;
     Playing player_one, player_two;
     player_one.side = 'X', player_two.side = 'O';
-    char server_buffer[BUFFER], table[3][3], confirm[50];
+    char server_buffer[BUFFER], table[3][3], confirm[100];
     int error;
 
     pthread_mutex_lock(&lock);
@@ -319,7 +319,7 @@ void * start_game(void *arg){
     close(player_one.client_sock);
     close(player_two.client_sock);
     pthread_mutex_unlock(&lock);
-    return 1;
+    return 0;
 }
 
 
@@ -347,7 +347,7 @@ int main(int argc, char * argv[argc + 1]){
     host_hints.ai_socktype = SOCK_STREAM;
     host_hints.ai_flags = AI_PASSIVE;
 
-    int info = getaddrinfo("top.cs.rutgers.edu", SERVER_PORT, &host_hints, &result_list);
+    int info = getaddrinfo("localhost", SERVER_PORT, &host_hints, &result_list);
     if(info < 0){
         fprintf(stderr, "Error in getting address info: %s\n", gai_strerror(info));
         exit(EXIT_FAILURE);
@@ -388,31 +388,42 @@ int main(int argc, char * argv[argc + 1]){
                 continue;
             } else {
                 //queueing client information while preventing other clients intervening.
-                char name_buffer[BUFFER], server_buffer[BUFFER];
-                strcpy(server_buffer, "Enter your name: ");
+                char name_buffer[20], server_buffer[BUFFER], protocol[4];
+                strcpy(server_buffer, "Enter PLAY: ");
                 if(write(client_sockfd, server_buffer, sizeof(server_buffer)) < 0){
                     perror("Error in sending message to client\n");
                     close(client_sockfd);
                     continue;
                 }
-                int bytes = read(client_sockfd, name_buffer, BUFFER);
+                int bytes = read(client_sockfd, protocol, 4);
                 if(bytes < 0){
                     perror("Failed in obtaining message from client.");
                     close(client_sockfd);
                     continue;
                 } else {
-                    char buffer_check[BUFFER];
-                    int real_bytes;
-                    if(sscanf(name_buffer, "%s|%d|%s", buffer_check, &real_bytes, player[clientNum].name) != 3){
-                        perror("Incorrect format.");
+                    if(bytes == 0){
+                        perror("Messages reached EOF.\n");
                         close(client_sockfd);
                         continue;
                     } else {
-                        printf("%s|%d|%s", buffer_check, real_bytes, player[clientNum].name);
-                        player[clientNum].socket = client_sockfd;
-                        player[clientNum].queue_position = clientNum;
-                        clientNum++;
-                        acceptable++;
+                        strcpy(server_buffer, "Enter your name: ");
+                        if(write(client_sockfd, server_buffer, sizeof(server_buffer)) < 0){
+                            perror("Error in sending message to client");
+                            close(client_sockfd);
+                            continue;
+                        } else {
+                            if((bytes = read(client_sockfd, name_buffer, 20)) < 0){
+                                perror("Error in receiving message from client");
+                                close(client_sockfd);
+                            } else{
+                                printf("%s|%d|%s", protocol, bytes, name_buffer);
+                                strcpy(player[clientNum].name, name_buffer);
+                                player[clientNum].socket = client_sockfd;
+                                player[clientNum].queue_position = clientNum;
+                                clientNum++;
+                                acceptable++;
+                            }
+                        }
                     }
                 }
      
@@ -451,6 +462,7 @@ int main(int argc, char * argv[argc + 1]){
                 
             }
             acceptable = 0;
+
             
         }
         
