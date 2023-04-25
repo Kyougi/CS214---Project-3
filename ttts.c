@@ -31,26 +31,63 @@ volatile int active = 1;
 
 
 
-typedef struct game_setting{
-    char x_name[50];
-    char o_name[50];
+struct game_setting{
+    char * x_name;
+    char * o_name;
     char x_side;
     char o_side;
     int client_xfd;
     int client_ofd;
-    int x_state;
-    int o_state;
+    int game_state;
     pthread_t game;
-} Game;
+}; 
 
-typedef struct clients{
+typedef struct turn{
+    char client_msg[BUFFER];
+    char * name;
+    char side;
     int socket;
+} current_turn;
+typedef struct clients{
+    int *socket;
     struct sockaddr_storage addr;
     socklen_t socklength;
     char name[50]; 
     int active_game;
     int refuse_play; 
 } Clients;
+
+struct begn_params{
+    char name_x[20];
+    char name_o[20];
+    char x;
+    char o;
+};
+
+struct move_params{
+    int x;
+    int y;
+};
+
+struct movd_params{
+    char msg[BUFFER];
+    char side;
+    int x;
+    int y;
+};
+
+struct draw_params{
+    char accept;
+    char reject;
+    char name[20];
+};
+
+union game_params{
+    struct move_params move;
+    struct begn_params begn;
+    struct movd_params movd;
+    struct draw_params draw; 
+};
 
 void handler(int signum){
     active = 0;
@@ -71,21 +108,22 @@ void install_handlers(sigset_t *mask)
     sigaddset(mask, SIGTERM);
 }
 
-void * type_hello(void *arg){
-    Clients * new_client = arg; 
+void type_hello(Clients ** arg){
+    Clients * new_client = *arg;
     int error, bytes;
     char buffer[BUFFER/4], protocol[BUFFER/4], names[20];
-    printf("Client %d has connected to the server!\n", new_client->socket);
+    printf("Client %d has connected to the server!\n", *new_client->socket);
+    
     while((strcmp(protocol, ONE) != 0)){
         pthread_mutex_lock(&lock);
         strcpy(buffer, "Enter PLAY without spaces: ");
-        error = write((new_client)->socket, buffer, sizeof(buffer));
+        error = write(*(new_client)->socket, buffer, sizeof(buffer));
         if(error < 0){
             perror("Write error: ");
             (new_client)->refuse_play = 1;
             return NULL;
         }
-        error = read((new_client)->socket, protocol, BUFFER/4);
+        error = read(*(new_client)->socket, protocol, BUFFER/4);
         if(error < 0){
             printf("Error in getting read: %s\n", strerror(error));
             (new_client)->refuse_play = 1;
@@ -97,13 +135,13 @@ void * type_hello(void *arg){
         } 
     }
     strcpy(buffer, "Enter your name");
-    error = write((new_client)->socket, buffer, sizeof(buffer));
+    error = write(*(new_client)->socket, buffer, sizeof(buffer));
     if(error < 0){
         perror("Write error: ");
         (new_client)->refuse_play = 1;
         return NULL;
     }
-    bytes = read((new_client)->socket, names, 20);
+    bytes = read(*(new_client)->socket, names, 20);
     if(bytes < 0){
         printf("Error in getting read: %s\n", strerror(error));
         (new_client)->refuse_play = 1;
@@ -114,7 +152,7 @@ void * type_hello(void *arg){
         return NULL;
     } else if(sizeof(names) > 20) {
         strcpy(buffer, "Name too long\n");
-        write((new_client)->socket, buffer, sizeof(buffer));
+        write(*(new_client)->socket, buffer, sizeof(buffer));
         (new_client)->refuse_play = 1;
         return NULL;
     } else {
@@ -134,16 +172,68 @@ void * type_hello(void *arg){
         strcpy((new_client)->name, names);
     }
     pthread_mutex_unlock(&lock);
-    return NULL;
+    
 }
 
 
 
+void begn_play(union game_params * g_params, struct game_setting *settings){
+    char server_buffer1[BUFFER], server_buffer2[BUFFER];
+
+    strcpy(g_params->begn.name_x, settings->x_name), strcpy(g_params->begn.name_o, settings->o_name);
+    g_params->begn.x = settings->x_side, g_params->begn.o = settings->o_side;
+
+    spritnf(server_buffer1, "BEGN|%ld|%c|%s|\n", sizeof(g_params->begn.name_x), g_params->begn.x, g_params->begn.name_x), sprintf(server_buffer2, "BEGN|%ld|%c|%s|\n", sizeof(g_params->begn.name_o), g_params->begn.o, g_params->begn.name_o);
+
+    write(settings->client_xfd, server_buffer2, sizeof(server_buffer2));
+    write(settings->client_ofd, server_buffer1, sizeof(server_buffer1));
+}
+
+
+void read_client_message(union game_params * g_params, struct game_setting *settings){
+    char server_buffer[BUFFER];
+    int position_chosen = 0;
+    current_turn player;
+    if(settings->game_state == X_TURN){
+        strcpy(player.name, settings->x_name);
+        player.side = settings->x_side;
+        player.socket = settings->client_xfd;
+    } else if(settings->game_state == O_TURN){
+        strcpy(player.name, settings->o_name);
+        player.side = settings->o_side;
+        player.socket = settings->client_ofd;
+    }
+
+    while(position_chosen == 0){
+        strcpy(server_buffer, "Choose a protocol:\n1. MOVE\n2. RSGN\n3. DRAW");
+        write(player)
+    }
+
+
+}
+
+void * play_game(void *arg){
+    struct game_setting *settings = (struct game_setting*)arg;
+    char server_buffer[BUFFER];
+    union game_params g_params;
+
+    pthread_mutex_lock(&lock); 
+    begn_play(&g_params, settings);
+
+    int win_confirm = 0;
+    while(win_confirm == 0){
+        settings->game_state = X_TURN;
+        read_client_message(&g_params, settings);
+    }
+
+    return NULL;
+}
+
 int main(int argc, char * argv[argc + 1]){
     struct addrinfo host_hints, *result_list, *results;
     int server_fd, client_fd, clientNum = 0, error = 0, enough = 0;
-    pthread_t say_hello;
-    Clients ** client_list[QUEUE_SIZE]; 
+    pthread_t games; 
+    Clients * client_list[QUEUE_SIZE]; 
     //Game * ttt_game;
  
 
@@ -189,7 +279,7 @@ int main(int argc, char * argv[argc + 1]){
     pthread_mutex_init(&lock, NULL);
 
     printf("%s is currently listening on port %s.\n", HOST_NAME, SERVICE);
-    while(1){
+    while(active){
         int index = (QUEUE_SIZE - 1) - clientNum;
         Clients * con = (Clients*)malloc(sizeof(Clients));
         con->socklength = sizeof(struct sockaddr_storage);
@@ -198,47 +288,76 @@ int main(int argc, char * argv[argc + 1]){
             perror("Accept error: ");
             return EXIT_FAILURE; 
         } else {
-            con->socket = client_fd;
-            error = pthread_sigmask(SIG_BLOCK, &mask, NULL);
-            if (error != 0) {
-        	    fprintf(stderr, "sigmask: %s\n", strerror(error));
-        	    exit(EXIT_FAILURE);
-            }
-            if((error = pthread_create(&say_hello, NULL, type_hello, con)) != 0){
-                fprintf(stderr, "Error in creating thread: %s\n", strerror(error));
-                close(client_fd);
-                free(con);
-                return EXIT_FAILURE;
-            }
-            pthread_detach(say_hello);
-            error = pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
-            if (error != 0) {
-        	    fprintf(stderr, "sigmask: %s\n", strerror(error));
-        	    exit(EXIT_FAILURE);
-            }
+            con->socket = &client_fd;
+            type_play(&con);
             if(con->refuse_play == 1){
-                close(con->socket);
+                close(*con->socket);
                 free(con);
                 continue;
             } else {
-                client_list[index] = &con;
+                client_list[index] = con;
                 clientNum++; 
                 enough++;
             }
         }
         if(enough == 2){
             //setting up the player in this one. 
-
+            struct game_setting *games = (struct game_setting*)malloc(sizeof(struct game_setting));
+            int count = 2;
+            for(int i = QUEUE_SIZE - 1; i >= 0; i--){
+                if(count  == 2){
+                    break;
+                }
+                if(client_list[i]->active_game != 1 && (i % 2 ) == 1){
+                    client_list[i]->active_game = 1;
+                    strcpy(games->x_name, client_list[i]->name);
+                    games->client_xfd = *client_list[i]->socket;
+                    games->x_side = 'X';
+                    count++;
+                } else if(client_list[i]->active_game != 1 && (i%2) == 0){
+                    client_list[i]->active_game = 1;
+                    strcpy(games->o_name, client_list[i]->name);
+                    games->client_ofd = *client_list[i]->socket;
+                    games->o_side = 'O';
+                    count++;
+                }
+                
+            }
+            error = pthread_sigmask(SIG_BLOCK, &mask, NULL);
+            if(error < 0 ){
+                fprintf(stderr, "Error on sigmask: %s\n",strerror(error));
+                exit(EXIT_FAILURE); 
+            }
+            error = pthread_create(&games->game, NULL, play_game, games);
+            if(error < 0){
+                fpritnf(stderr, "Create error: %s\n", strerror(error));
+                exit(EXIT_FAILURE);
+            }
+            error = pthread_join(games->game, NULL);
+            if(error < 0){
+                fprintf(stderr, "pthread_join: ", strerror(error));
+                exit(EXIT_FAILURE);
+            }
+            pthread_detach(games->game);
+            error = pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
+            if(error < 0){
+                fprintf(stderr, "sigmask error: %s\n", strerror(error));
+                exit(EXIT_FAILURE);
+            } 
         } else {
             //this one accoutns for only one player
             int server_buffer[BUFFER/4];
-            sprintf(server_buffer, "%s|0|", TWO);
-            error = write(con->socket, server_buffer, sizeof(server_buffer));
+            sprintf(server_buffer, "%s|0|\n", TWO);
+            error = write(*con->socket, server_buffer, sizeof(server_buffer));
             if(error){
                 perror("Write error: ");
                 return EXIT_FAILURE;
-            }
+            }  
         }
     }
+    for(int i = 0; i < QUEUE_SIZE; i++){
+        free(client_list[i]);
+    }
+    close(server_fd);
     return 0;
 }
