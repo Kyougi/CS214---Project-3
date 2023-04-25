@@ -75,6 +75,7 @@ void * type_hello(void *arg){
     Clients * new_client = arg; 
     int error, bytes;
     char buffer[BUFFER/4], protocol[BUFFER/4], names[20];
+    printf("Client %d has connected to the server!\n", new_client->socket);
     while((strcmp(protocol, ONE) != 0)){
         pthread_mutex_lock(&lock);
         strcpy(buffer, "Enter PLAY without spaces: ");
@@ -136,6 +137,8 @@ void * type_hello(void *arg){
     return NULL;
 }
 
+
+
 int main(int argc, char * argv[argc + 1]){
     struct addrinfo host_hints, *result_list, *results;
     int server_fd, client_fd, clientNum = 0, error = 0, enough = 0;
@@ -195,7 +198,6 @@ int main(int argc, char * argv[argc + 1]){
             perror("Accept error: ");
             return EXIT_FAILURE; 
         } else {
-            printf("Client has connected!");
             con->socket = client_fd;
             error = pthread_sigmask(SIG_BLOCK, &mask, NULL);
             if (error != 0) {
@@ -222,6 +224,19 @@ int main(int argc, char * argv[argc + 1]){
                 client_list[index] = &con;
                 clientNum++; 
                 enough++;
+            }
+        }
+        if(enough == 2){
+            //setting up the player in this one. 
+
+        } else {
+            //this one accoutns for only one player
+            int server_buffer[BUFFER/4];
+            sprintf(server_buffer, "%s|0|", TWO);
+            error = write(con->socket, server_buffer, sizeof(server_buffer));
+            if(error){
+                perror("Write error: ");
+                return EXIT_FAILURE;
             }
         }
     }
