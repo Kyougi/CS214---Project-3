@@ -1,16 +1,12 @@
 COMPILER     = gcc
-CFLAGS = -g -Wall -Wimplicit-function-declaration
 CFLAGS2 = -g -Wall -pthread -Wimplicit-function-declaration
-all: ttts ttt
+all: ttts1
 
-ttts: ttts.o
-	$(COMPILER) $(CFLAGS2) -o ttts ttts.o
-ttt: ttt.o
-	$(COMPILER) $(CFLAGS) -o ttt ttt.o
-ttts.o: ttts.c
-	$(COMPILER) $(CFLAGS2) -c ttts.c
-ttt.o: ttt.c
-	$(COMPILER) $(CFLAGS) -c ttt.c
+ttts1: ttts1.o
+	$(COMPILER) $(CFLAGS2) -o ttts1 ttts1.o
+
+ttts1.o: ttts1.c
+	$(COMPILER) $(CFLAGS2) -c ttts1.c
 
 clean:
-	rm -f *.o ttts ttt 
+	rm -f *.o ttts1
