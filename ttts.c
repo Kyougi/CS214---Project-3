@@ -11,6 +11,8 @@
 #include <netdb.h>
 #include <pthread.h>
 #include <errno.h>
+#include <arpa/inet.h>
+#include <netinet/tcp.h>
 
 #define HOST_NAME "localhost"
 #define SERVICE "5566"
@@ -28,9 +30,9 @@
 #define OVER_CMD	9
 
 pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-struct game_state *pre_def_games[QUEUE_SIZE/2];
 volatile int active = 1;
 int current_free = QUEUE_SIZE/2;
+int server_fd = 0;
 
 typedef struct players{
     char name[50];
@@ -40,10 +42,6 @@ typedef struct players{
 } Playing;
 
 struct game_state {
-	char *x_name;
-	char *o_name;
-	int fd_x; /* the fd from X player */
-	int fd_o; /* the fd from the O player */
 	Playing X;
 	Playing O;
 	int x_state;
@@ -56,7 +54,7 @@ struct game_state {
 
 
 typedef struct clients{
-    int *socket;
+    int socket;
     struct sockaddr_storage addr;
     socklen_t socklength;
     char name[50]; 
@@ -101,6 +99,8 @@ union game_params{
     struct draw_params draw; 
 };
 
+struct game_state pre_def_games[QUEUE_SIZE/2];
+
 void handler(int signum){
     active = 0;
 }
@@ -121,7 +121,11 @@ void install_handlers(sigset_t *mask)
 }
 
 int send_client(int * client_fd, char * buffer){
-    int error; 
+    int error;
+    int batch;
+
+    batch = strlen(buffer);
+    setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &batch, sizeof(batch));
     if((error = write(*client_fd, buffer, sizeof(buffer))) > 0){
         goto im_return;
     } else{
@@ -172,13 +176,13 @@ int parse_msg(char * msg, Clients ** con){
 }
 
 void initialize_board(char (*table)[3]){
-    pthread_mutex_lock(&lock);
+	//pthread_mutex_lock(&lock);
     for(int i = 0; i < 3; i++){
         for(int j = 0; j < 3; j++){
             table[i][j] = '-';
         }
     }
-    pthread_mutex_unlock(&lock);
+    //pthread_mutex_unlock(&lock);
 }
 
 void print_board(char (*table)[3], Playing *player){
@@ -210,7 +214,7 @@ int check_board(char table[3][3]){
 }
 
 int options(Playing *player_one, Playing * player_two, char (*table)[3]){
-    char server_buffer[256], error[100], protocol[4], draw;
+    char server_buffer[256], error[100], protocol[10], draw;
     int position_chosen = 0;
     print_board(table, player_one);
     int x = 0, y = 0;
@@ -224,7 +228,7 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
                 position_chosen = -1;
                 break;
             } else {
-                if(strcmp(protocol, "MOVE") == 0){
+		    if(strncmp(protocol, "MOVE", 4) == 0){
                     strcpy(protocol, player_one->buffer);
                     strcpy(server_buffer, "Choose a position between 1 and 3 (Input in the format x,y without spaces)\n");
                     if(send_client(&player_one->client_fd, server_buffer) < 0){
@@ -323,108 +327,105 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
 void * play_game(void *context){
 	struct game_state *game = (struct game_state *)context;
 	char msg[256];
-    int option = 0, turns = 0; 
-    pthread_mutex_lock(&lock);
-    strcpy(game->X.name, game->x_name), strcpy(game->O.name, game->o_name);
-    game->X.client_fd = game->fd_x, game->O.client_fd = game->fd_o;
-    game->X.side = 'X', game->O.side = 'O';
+	int option = 0, turns = 0;
+
+	//pthread_mutex_lock(&lock);
+	//strcpy(game->X.name, game->x_name), strcpy(game->O.name, game->o_name);
+	//game->X.client_fd = game->fd_x, game->O.client_fd = game->fd_o;
+	game->X.side = 'X', game->O.side = 'O';
 	initialize_board(game->table);
 
-    while(1){
-        switch(game->turn){
-            case X_TURN:
-                option = options(&game->X, &game->O, game->table);
-                if(option == -1){
-                    goto unlock;
-                    goto game_rsgn;
-                } else if(option == 1){
-                    int winner = 0;
-                    winner = check_board(game->table);
-                    if(winner == 1){
-                        sprintf(msg, "OVER|%s has won the game!", game->X.name);
-                        send_client(&game->X.client_fd, msg);
-                        send_client(&game->O.client_fd, msg);
-                        goto unlock;
-                        goto game_done;
-                    } else {
-                        game->turn = O_TURN;
-                        turns++;
-                    }
-                } else if(option == 2){
-                    sprintf(msg, "OVER|%s has resigned!", game->X.name);
-                    send_client(&game->X.client_fd, msg);
-                    send_client(&game->O.client_fd, msg);
-                    goto unlock;
-                    goto game_rsgn;
-                } else if(option == 3){
-                    strcpy(msg, "OVER|Both players have agreed to draw!");
-                    send_client(&game->X.client_fd, msg);
-                    send_client(&game->O.client_fd, msg);
-                    goto unlock;
-                    goto game_rsgn;
-                } 
-            default:
-                 option = options(&game->O, &game->X, game->table);
-                if(option == -1){
-                    goto unlock;
-                    goto game_rsgn;
-                } else if(option == 1){
-                    int winner = 0;
-                    winner = check_board(game->table);
-                    if(winner == 1){
-                        sprintf(msg, "OVER|%s has won the game!", game->O.name);
-                        send_client(&game->X.client_fd, msg);
-                        send_client(&game->O.client_fd, msg);
-                        goto unlock;
-                        goto game_done;
-                    } else {
-                        game->turn = X_TURN;
-                        turns++;
-                    }
-                } else if(option == 2){
-                    sprintf(msg, "OVER|%s has resigned!", game->O.name);
-                    send_client(&game->X.client_fd, msg);
-                    send_client(&game->O.client_fd, msg);
-                    goto unlock;
-                    goto game_rsgn;
-                } else if(option == 3){
-                    strcpy(msg, "OVER|Both players have agreed to draw!");
-                    send_client(&game->X.client_fd, msg);
-                    send_client(&game->O.client_fd, msg);
-                    goto unlock;
-                    goto game_rsgn;
-                }
-        }
-    }
+	while(1){
+		switch(game->turn){
+		case X_TURN:
+			option = options(&game->X, &game->O, game->table);
+			if(option == -1){
+				//goto unlock;
+				goto game_completed;
+			} else if(option == 1){
+				int winner = 0;
+				winner = check_board(game->table);
+				if(winner == 1){
+					sprintf(msg, "OVER|%s has won the game!", game->X.name);
+					send_client(&game->X.client_fd, msg);
+					send_client(&game->O.client_fd, msg);
+					//goto unlock;
+					goto game_completed;
+				} else {
+					game->turn = O_TURN;
+					turns++;
+				}
+			} else if(option == 2){
+				sprintf(msg, "OVER|%s has resigned!", game->X.name);
+				send_client(&game->X.client_fd, msg);
+				send_client(&game->O.client_fd, msg);
+				//goto unlock;
+				goto game_completed;
+			} else if(option == 3){
+				strcpy(msg, "OVER|Both players have agreed to draw!");
+				send_client(&game->X.client_fd, msg);
+				send_client(&game->O.client_fd, msg);
+				//goto unlock;
+				goto game_completed;
+			}
+		default:
+			option = options(&game->O, &game->X, game->table);
+			if(option == -1){
+				//goto unlock;
+				goto game_completed;
+			} else if(option == 1) {
+				int winner = 0;
+				winner = check_board(game->table);
+				if(winner == 1){
+					sprintf(msg, "OVER|%s has won the game!", game->O.name);
+					send_client(&game->X.client_fd, msg);
+					send_client(&game->O.client_fd, msg);
+					//goto unlock;
+					goto game_completed;
+				} else {
+					game->turn = X_TURN;
+					turns++;
+				}
+			} else if(option == 2){
+				sprintf(msg, "OVER|%s has resigned!", game->O.name);
+				send_client(&game->X.client_fd, msg);
+				send_client(&game->O.client_fd, msg);
+				//goto unlock;
+				goto game_completed;
+			} else if(option == 3){
+				strcpy(msg, "OVER|Both players have agreed to draw!");
+				send_client(&game->X.client_fd, msg);
+				send_client(&game->O.client_fd, msg);
+				//goto unlock;
+				goto game_completed;
+			}
+		}
+	}
 
-unlock:
-    pthread_mutex_unlock(&lock);
-game_rsgn:
-    close(game->fd_o);
-	close(game->fd_x);
-	pthread_exit(NULL);
-
-game_done:
-	close(game->fd_x);
-	close(game->fd_o);
+	//unlock:
+	//pthread_mutex_unlock(&lock);
+game_completed:
+	close(game->X.client_fd);
+	close(game->O.client_fd);
 	pthread_exit(NULL);
 }
 
 int main(int argc, char * argv[argc + 1]){
     struct addrinfo host_hints, *result_list, *results;
-    int server_fd, client_fd, clientNum = 0, error = 0, cmd =0;
+    int client_fd, clientNum = 0, error = 0, cmd =0;
     Clients * con;
     char server_buffer[256];
-    struct game_state game, *newgame;  
+    struct game_state *game, *newgame;  
     //Game * ttt_game;
- 
 
     memset(&host_hints, 0, sizeof(struct addrinfo));
-    host_hints.ai_family = AF_UNSPEC;
+    host_hints.ai_family = AF_INET;
     host_hints.ai_socktype = SOCK_STREAM;
     host_hints.ai_flags = AI_PASSIVE;
 
     sigset_t mask; 
+    char addr_buf[64];
+    int batch = 4;
 
     install_handlers(&mask);
 
@@ -433,22 +434,28 @@ int main(int argc, char * argv[argc + 1]){
         fprintf(stderr, "Error on getting address: %s\n", strerror(error));
         exit(EXIT_FAILURE);
     }
+
     for(results = result_list; results != NULL; results = results->ai_next){
-        server_fd = socket(results->ai_family, results->ai_socktype, results->ai_protocol);
-        if(server_fd < 0){
-            continue;
-        }
-        error = bind(server_fd, results->ai_addr, results->ai_addrlen);
-        if(error){
-            close(server_fd);
-            continue;
-        }
-        error = listen(server_fd, QUEUE_SIZE);
-        if(error){
-            close(server_fd);
-            continue;
-        }
-        break;
+	    if (results->ai_family != AF_INET)
+		    continue;
+	    inet_ntop(AF_INET, &((struct sockaddr_in *)results->ai_addr)->sin_addr, addr_buf, sizeof(addr_buf));
+	    fprintf(stdout, "Opening socket on %s\n", addr_buf);
+	    server_fd = socket(results->ai_family, results->ai_socktype, results->ai_protocol);
+	    if(server_fd < 0){
+		    continue;
+	    }
+	    error = bind(server_fd, results->ai_addr, results->ai_addrlen);
+	    if(error){
+		    close(server_fd);
+		    continue;
+	    }
+	    error = listen(server_fd, QUEUE_SIZE);
+	    if(error){
+		    close(server_fd);
+		    continue;
+	    }
+	    setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &batch, sizeof(batch));
+	    break;
     }
     
     freeaddrinfo(result_list);
@@ -460,38 +467,33 @@ int main(int argc, char * argv[argc + 1]){
     if(server_fd < 0){
         exit(EXIT_FAILURE);
     }
-    pthread_mutex_init(&lock, NULL);
+    //pthread_mutex_init(&lock, NULL);
     printf("%s is listening for incoming connections on port %s...\n", HOST_NAME, SERVICE);
 
     while(active){
-        con = (Clients*)malloc(sizeof(Clients));
-        con->socklength = sizeof(struct sockaddr_storage);
+	    con = (Clients*)malloc(sizeof(Clients));
 
-        client_fd = accept(server_fd, (struct sockaddr*)&con->addr, &con->socklength);
+	    client_fd = accept(server_fd, (struct sockaddr*)&con->addr, &con->socklength);
         if(client_fd > 0){
             char server_buffer[256], client_buffer[256];
-            pthread_mutex_lock(&lock);
+            //pthread_mutex_lock(&lock);
+
             strcpy(server_buffer, "[Enter play here]|[Enter your name here] (Do not add spaces!)");
             if((error = send_client(&client_fd, server_buffer)) < 0){
                 close(client_fd);
                 goto escape;
-                continue;
             }
             error = receive_client(&client_fd, client_buffer);
             if(error <= 0){
                 close(client_fd);
                 goto escape;
-                continue;
             } else {
                 cmd = parse_msg(client_buffer, &con);
-                con->socket = &client_fd;
+                con->socket = client_fd;
                 client_list[clientNum] = con;
-                clientNum++;
                 goto escape;
-                continue;
             }
             escape:
-            pthread_mutex_unlock(&lock);
         } else {
             if(client_fd == ECONNABORTED){
                 printf("Connection has been aborted.\n");
@@ -507,45 +509,46 @@ int main(int argc, char * argv[argc + 1]){
             case PLAY_CMD:
                 newgame = NULL;
                 for(int i = 0; i < current_free; i++){
-                    if(pre_def_games[i]->x_state == PLAYER_STATE_WAIT){
-                        newgame = pre_def_games[i];
+                    if(pre_def_games[i].x_state == PLAYER_STATE_WAIT){
+                        newgame = &pre_def_games[i];
                     }
                 }
-                if(newgame->x_state == PLAYER_STATE_WAIT){
+                if(newgame && newgame->x_state == PLAYER_STATE_WAIT){
                     char buf[256];
-                    newgame->fd_o = *client_list[clientNum]->socket;
-					strcpy(newgame->o_name, client_list[clientNum]->name);
-					newgame->o_state = PLAYER_STATE_WAIT;
-					sprintf(buf, "BEGN|%ld|X|%s", sizeof(newgame->x_name), newgame->x_name);
-					write(newgame->fd_x, buf, sizeof(buf));
-					sprintf(buf, "BEGN|%ld|O|%s", sizeof(newgame->o_name), newgame->o_name);
-					write(newgame->fd_o, buf, sizeof(buf));
-					newgame->turn = X_TURN;
-					/* remove this game from wait list */
+                    newgame->O.client_fd = client_list[clientNum]->socket;
+		    strcpy(newgame->O.name, client_list[clientNum]->name);
+		    newgame->o_state = PLAYER_STATE_WAIT;
+		    sprintf(buf, "BEGN|%ld|X|%s", sizeof(newgame->X.name), newgame->X.name);
+		    write(newgame->X.client_fd, buf, sizeof(buf));
+		    sprintf(buf, "BEGN|%ld|O|%s", sizeof(newgame->O.name), newgame->O.name);
+		    write(newgame->O.client_fd, buf, sizeof(buf));
+		    newgame->turn = X_TURN;
+		    /* remove this game from wait list */
                     pthread_sigmask(SIG_BLOCK, &mask, NULL);
-					pthread_create(&newgame->game_id, NULL, play_game, newgame);
-                    pthread_join(newgame->game_id, NULL);
+		    pthread_create(&newgame->game_id, NULL, play_game, newgame);
+                    pthread_detach(newgame->game_id);
                     pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
-                    clientNum--;
                 } else {
-                    pthread_mutex_lock(&lock);
+			//pthread_mutex_lock(&lock);
                     char protocol[5];
-                    strcpy(game.x_name, client_list[clientNum - 1]->name);
-                    game.x_state = PLAYER_STATE_WAIT;
-                    game.begin_played = 1;
-                    game.fd_x = *client_list[clientNum - 1]->socket;
+		    game = &pre_def_games[current_free++];
+                    strcpy(game->X.name, client_list[clientNum]->name);
+                    game->x_state = PLAYER_STATE_WAIT;
+                    game->begin_played = 1;
+                    game->X.client_fd = client_list[clientNum]->socket;
                     strcpy(protocol,"WAIT");
-                    write(*client_list[clientNum - 1]->socket, protocol, sizeof(protocol));
-                    pre_def_games[current_free] = &game;
-                    current_free++;
-                    continue;
+                    write(client_list[clientNum]->socket, protocol, sizeof(protocol));
                 }
+		break;
+
             default:
                 sprintf(server_buffer, "INVL|Invalid protocols and/or format, client %d. Please type in the format specified next time.\n", client_fd);
                 write(client_fd, server_buffer, sizeof(server_buffer));
                 close(client_fd);
                 continue; 
         }
+
+	clientNum++;
     }
     return 0;
 }
