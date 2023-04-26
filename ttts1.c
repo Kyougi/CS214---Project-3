@@ -212,21 +212,23 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
                         sprintf(server_buffer, "INVL|%ld|%s|", sizeof(error), error);
                         if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer)) < 0){
                             position_chosen = -1;
-                            break; 
-                            continue;
-                        
-                        } else if(table[x-1][y-1] == 'X' || table[x-1][y-1] == 'O'){
+                            break;
+                        }
+                        continue;
+
+                    } else if(table[x-1][y-1] == 'X' || table[x-1][y-1] == 'O'){
                         strcpy(error, "Space taken!");
                         sprintf(server_buffer, "INVL|%ld|%s|", sizeof(error), error);
-                            if(send_client(&player_one->client_fd,      server_buffer, sizeof(server_buffer)) < 0){
-                            position_chosen = -1;
-                            break; 
-                             }
-                            continue;
-                        } else {
-                        table[x-1][y-1] = player_one->side;
-                        strcpy(error, " has made a move.");
-                        sprintf(server_buffer,"MOVD|%ld|%c|%d,%d|%s %s|", sizeof(error), player_one->side, x, y, player_one->name, error);
+                        if(send_client(&player_one->client_fd,      server_buffer, sizeof(server_buffer)) < 0){
+                                position_chosen = -1;
+                                break; 
+                        }
+                        continue;
+                    } 
+                    
+                    table[x-1][y-1] = player_one->side;
+                    strcpy(error, " has made a move.");
+                    sprintf(server_buffer,"MOVD|%ld|%c|%d,%d|%s %s|", sizeof(error), player_one->side, x, y, player_one->name, error);
                         if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer)) < 0){
                             position_chosen = -1;
                             break; 
@@ -237,8 +239,6 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
                         }
                         position_chosen = 1;
                         break;                   
-                    }
-                    
                 }
             } else if(strncmp(player_one->buffer, "RSGN", 4) == 0){
                 position_chosen = 2;
@@ -268,14 +268,11 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
             } else {
                 strcpy(error, "Invalid Protocol!");
                 sprintf(server_buffer,"INVL|%ld|%s|", sizeof(error), error);
-                if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer))){
-                    position_chosen = -1;
-                    break;
-                }
+                send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer));
                 continue;
             }
-        }
     }
+    
     return position_chosen;
 }
 
@@ -322,7 +319,8 @@ void * play_game(void *context){
 				//goto unlock;
 				goto game_completed;
 			}
-		default:
+            break;
+		case O_TURN:
 			option = options(&game->O, &game->X, game->table);
 			if(option == -1){
 				//goto unlock;
@@ -353,6 +351,10 @@ void * play_game(void *context){
 				//goto unlock;
 				goto game_completed;
 			}
+            break;
+        default: 
+            printf("No one's turn.\n");
+            goto game_completed;
 		}
 	}
 
@@ -429,6 +431,7 @@ int main(int argc, char * argv[argc + 1]){
 
 	    client_fd = accept(server_fd, (struct sockaddr*)&con->addr, &con->socklength);
         if(client_fd > 0){
+            printf("Client %d has connected.\n", client_fd);
              char client_buffer[256];
             //pthread_mutex_lock(&lock);
             error = receive_client(&client_fd, client_buffer, sizeof(client_buffer));
@@ -465,10 +468,11 @@ int main(int argc, char * argv[argc + 1]){
                     char buf[256];
                     newgame->O.client_fd = client_list[clientNum]->socket;
 		    strcpy(newgame->O.name, client_list[clientNum]->name);
-		    newgame->o_state = PLAYER_STATE_WAIT;
-		    sprintf(buf, "BEGN|%ld|X|%s", sizeof(newgame->X.name), newgame->X.name);
+		    newgame->o_state = CURRENTLY_IN_GAME;
+            newgame->x_state = CURRENTLY_IN_GAME;
+		    sprintf(buf, "BEGN|%ld|X|%s|", sizeof(newgame->X.name), newgame->X.name);
 		    write(newgame->X.client_fd, buf, sizeof(buf));
-		    sprintf(buf, "BEGN|%ld|O|%s", sizeof(newgame->O.name), newgame->O.name);
+		    sprintf(buf, "BEGN|%ld|O|%s|", sizeof(newgame->O.name), newgame->O.name);
 		    write(newgame->O.client_fd, buf, sizeof(buf));
 		    newgame->turn = X_TURN;
 		    /* remove this game from wait list */
