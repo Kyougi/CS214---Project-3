@@ -522,8 +522,10 @@ int main(int argc, char * argv[argc + 1]){
 					write(newgame->fd_o, buf, sizeof(buf));
 					newgame->turn = X_TURN;
 					/* remove this game from wait list */
+                    pthread_sigmask(SIG_BLOCK, &mask, NULL);
 					pthread_create(&newgame->game_id, NULL, play_game, newgame);
                     pthread_join(newgame->game_id, NULL);
+                    pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
                     clientNum--;
                 } else {
                     pthread_mutex_lock(&lock);
