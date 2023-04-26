@@ -120,13 +120,13 @@ void install_handlers(sigset_t *mask)
     sigaddset(mask, SIGTERM);
 }
 
-int send_client(int * client_fd, char * buffer){
+int send_client(int * client_fd, char * buffer, int size){
     int error;
     int batch;
 
     batch = strlen(buffer);
     setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &batch, sizeof(batch));
-    if((error = write(*client_fd, buffer, sizeof(buffer))) > 0){
+    if((error = write(*client_fd, buffer, size)) > 0){
         goto im_return;
     } else{
         if(error == EINTR){
@@ -145,9 +145,10 @@ int send_client(int * client_fd, char * buffer){
     return error; 
 }
 
-int receive_client(int * client_fd, char * buffer){
+int receive_client(int * client_fd, char * buffer, int size){
     int bytes;
-    if((bytes = read(*client_fd, buffer, sizeof(buffer))) > 0){
+    memset(buffer, 0, size);
+    if((bytes = read(*client_fd, buffer, size)) > 0){
         goto im_return;
     } else {
         if(bytes == 0){
@@ -200,7 +201,7 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
     int position_chosen = 0;
     int x = 0, y = 0;
     while(position_chosen == 0){
-            if(receive_client(&player_one->client_fd, player_one->buffer) < 0){
+            if(receive_client(&player_one->client_fd, player_one->buffer, sizeof(player_one->buffer)) < 0){
                 position_chosen = -1;
                 break;
             }
@@ -209,44 +210,46 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
                     if((x < 0 || x > 3) && (y >3 || y < 0)){
                         strcpy(error, "Out of bounds!");
                         sprintf(server_buffer, "INVL|%ld|%s|", sizeof(error), error);
-                        if(send_client(&player_one->client_fd, server_buffer) < 0){
+                        if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer)) < 0){
                             position_chosen = -1;
                             break; 
-                        continue;
+                            continue;
+                        
                         } else if(table[x-1][y-1] == 'X' || table[x-1][y-1] == 'O'){
                         strcpy(error, "Space taken!");
                         sprintf(server_buffer, "INVL|%ld|%s|", sizeof(error), error);
-                        if(send_client(&player_one->client_fd, server_buffer) < 0){
+                            if(send_client(&player_one->client_fd,      server_buffer, sizeof(server_buffer)) < 0){
                             position_chosen = -1;
                             break; 
-                        }
-                        continue;
+                             }
+                            continue;
                         } else {
                         table[x-1][y-1] = player_one->side;
                         strcpy(error, " has made a move.");
                         sprintf(server_buffer,"MOVD|%ld|%c|%d,%d|%s %s|", sizeof(error), player_one->side, x, y, player_one->name, error);
-                        if(send_client(&player_one->client_fd, server_buffer) < 0){
+                        if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer)) < 0){
                             position_chosen = -1;
                             break; 
                         }
-                        if(send_client(&player_two->client_fd, server_buffer) < 0){
+                        if(send_client(&player_two->client_fd, server_buffer,sizeof(server_buffer)) < 0){
                             position_chosen = -1;
                             break; 
                         }
                         position_chosen = 1;
-                        break;
-                        }
+                        break;                   
+                    }
+                    
                 }
             } else if(strncmp(player_one->buffer, "RSGN", 4) == 0){
                 position_chosen = 2;
                 break;
             } else if(strncmp(player_one->buffer, "DRAW", 4) == 0){
                 strcpy(server_buffer, "DRAW|1|S|\n");
-                if(send_client(&player_two->client_fd, server_buffer) < 0){
+                if(send_client(&player_two->client_fd, server_buffer, sizeof(server_buffer)) < 0){
                     position_chosen = -1;
                     break; 
                 }
-                if(receive_client(&player_two->client_fd, player_two->buffer) < 0){
+                if(receive_client(&player_two->client_fd, player_two->buffer, sizeof(player_two->buffer)) < 0){
                     position_chosen = -1;
                     break;
                 }
@@ -265,7 +268,7 @@ int options(Playing *player_one, Playing * player_two, char (*table)[3]){
             } else {
                 strcpy(error, "Invalid Protocol!");
                 sprintf(server_buffer,"INVL|%ld|%s|", sizeof(error), error);
-                if(send_client(&player_one->client_fd, server_buffer)){
+                if(send_client(&player_one->client_fd, server_buffer, sizeof(server_buffer))){
                     position_chosen = -1;
                     break;
                 }
@@ -298,8 +301,8 @@ void * play_game(void *context){
 				winner = check_board(game->table);
 				if(winner == 1){
 					sprintf(msg, "OVER|%s has won the game!", game->X.name);
-					send_client(&game->X.client_fd, msg);
-					send_client(&game->O.client_fd, msg);
+					send_client(&game->X.client_fd, msg, sizeof(msg));
+					send_client(&game->O.client_fd, msg, sizeof(msg));
 					//goto unlock;
 					goto game_completed;
 				} else {
@@ -308,14 +311,14 @@ void * play_game(void *context){
 				}
 			} else if(option == 2){
 				sprintf(msg, "OVER %s has resigned!", game->X.name);
-				send_client(&game->X.client_fd, msg);
-				send_client(&game->O.client_fd, msg);
+				send_client(&game->X.client_fd, msg, sizeof(msg));
+				send_client(&game->O.client_fd, msg, sizeof(msg));
 				//goto unlock;
 				goto game_completed;
 			} else if(option == 3){
 				strcpy(msg, "OVER Both players have agreed to draw!");
-				send_client(&game->X.client_fd, msg);
-				send_client(&game->O.client_fd, msg);
+				send_client(&game->X.client_fd, msg, sizeof(msg));
+				send_client(&game->O.client_fd, msg, sizeof(msg));
 				//goto unlock;
 				goto game_completed;
 			}
@@ -329,8 +332,8 @@ void * play_game(void *context){
 				winner = check_board(game->table);
 				if(winner == 1){
 					sprintf(msg, "OVER %s has won the game!", game->O.name);
-					send_client(&game->X.client_fd, msg);
-					send_client(&game->O.client_fd, msg);
+					send_client(&game->X.client_fd, msg, sizeof(msg));
+					send_client(&game->O.client_fd, msg, sizeof(msg));
 					//goto unlock;
 					goto game_completed;
 				} else {
@@ -339,14 +342,14 @@ void * play_game(void *context){
 				}
 			} else if(option == 2){
 				sprintf(msg, "OVER %s has resigned!", game->O.name);
-				send_client(&game->X.client_fd, msg);
-				send_client(&game->O.client_fd, msg);
+				send_client(&game->X.client_fd, msg, sizeof(msg));
+				send_client(&game->O.client_fd, msg, sizeof(msg));
 				//goto unlock;
 				goto game_completed;
 			} else if(option == 3){
 				strcpy(msg, "OVER Both players have agreed to draw!");
-				send_client(&game->X.client_fd, msg);
-				send_client(&game->O.client_fd, msg);
+				send_client(&game->X.client_fd, msg, sizeof(msg));
+				send_client(&game->O.client_fd, msg, sizeof(msg));
 				//goto unlock;
 				goto game_completed;
 			}
@@ -370,13 +373,13 @@ int main(int argc, char * argv[argc + 1]){
     //Game * ttt_game;
 
     memset(&host_hints, 0, sizeof(struct addrinfo));
-    host_hints.ai_family = AF_INET;
+    host_hints.ai_family = AF_UNSPEC;
     host_hints.ai_socktype = SOCK_STREAM;
     host_hints.ai_flags = AI_PASSIVE;
 
     sigset_t mask; 
-    char addr_buf[64];
-    int batch = 4;
+    //char addr_buf[64];
+    //int batch = 4;
 
     install_handlers(&mask);
 
@@ -387,10 +390,10 @@ int main(int argc, char * argv[argc + 1]){
     }
 
     for(results = result_list; results != NULL; results = results->ai_next){
-	    if (results->ai_family != AF_INET)
-		    continue;
-	    inet_ntop(AF_INET, &((struct sockaddr_in *)results->ai_addr)->sin_addr, addr_buf, sizeof(addr_buf));
-	    fprintf(stdout, "Opening socket on %s\n", addr_buf);
+	    //if (results->ai_family != AF_INET)
+		   // continue;
+	    //inet_ntop(AF_INET, &((struct sockaddr_in *)results->ai_addr)->sin_addr, addr_buf, sizeof(addr_buf));
+	    //fprintf(stdout, "Opening socket on %s\n", addr_buf);
 	    server_fd = socket(results->ai_family, results->ai_socktype, results->ai_protocol);
 	    if(server_fd < 0){
 		    continue;
@@ -405,7 +408,7 @@ int main(int argc, char * argv[argc + 1]){
 		    close(server_fd);
 		    continue;
 	    }
-	    setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &batch, sizeof(batch));
+	    //setsockopt(server_fd, IPPROTO_TCP, TCP_NODELAY, &batch, sizeof(batch));
 	    break;
     }
     
@@ -428,7 +431,7 @@ int main(int argc, char * argv[argc + 1]){
         if(client_fd > 0){
              char client_buffer[256];
             //pthread_mutex_lock(&lock);
-            error = receive_client(&client_fd, client_buffer);
+            error = receive_client(&client_fd, client_buffer, sizeof(client_buffer));
             if(error <= 0){
                 close(client_fd);
                 //goto escape;
